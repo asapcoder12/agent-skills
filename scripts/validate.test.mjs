@@ -1,7 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, dirname } from 'node:path'
 
-import { parseFrontmatter, validateSkillFrontmatter } from './validate.mjs'
+import { parseFrontmatter, validateSkillFrontmatter, validateRepo } from './validate.mjs'
 
 test('parseFrontmatter reads name and description', () => {
   const text = '---\nname: demo-skill\ndescription: Does a thing.\n---\n\n# Demo\n'
@@ -102,4 +105,96 @@ test('validateSkillFrontmatter warns rather than errors on a long body', () => {
   assert.deepEqual(errors, [])
   assert.equal(warnings.length, 1)
   assert.match(warnings[0], /body is 502 lines/)
+})
+
+function validRepoFiles(overrides = {}) {
+  const files = {
+    'skills/demo-skill/SKILL.md': '---\nname: demo-skill\ndescription: Does a thing. Use when testing.\n---\n\n# Demo\n',
+    '.claude-plugin/plugin.json': JSON.stringify({ skills: ['./skills/demo-skill'] }, null, 2),
+    'README.md': [
+      '| Skill | What it does |',
+      '|---|---|',
+      '| [`demo-skill`](skills/demo-skill/SKILL.md) | Demo |',
+      '',
+      '- `demo-skill` — use when testing',
+      ''
+    ].join('\n')
+  }
+  for (const [path, contents] of Object.entries(overrides)) {
+    if (contents === null) delete files[path]
+    else files[path] = contents
+  }
+  return files
+}
+
+function makeRepo(t, files) {
+  const root = mkdtempSync(join(tmpdir(), 'agent-skills-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  for (const [relativePath, contents] of Object.entries(files)) {
+    const full = join(root, relativePath)
+    mkdirSync(dirname(full), { recursive: true })
+    writeFileSync(full, contents)
+  }
+  return root
+}
+
+test('validateRepo accepts a well-formed repo', (t) => {
+  const { errors, warnings, skills } = validateRepo(makeRepo(t, validRepoFiles()))
+  assert.deepEqual(errors, [])
+  assert.deepEqual(warnings, [])
+  assert.deepEqual(skills, ['demo-skill'])
+})
+
+test('validateRepo reports a skill directory without SKILL.md', (t) => {
+  const files = validRepoFiles({ 'skills/demo-skill/SKILL.md': null, 'skills/demo-skill/notes.md': 'hi' })
+  const { errors } = validateRepo(makeRepo(t, files))
+  assert.ok(errors.some((message) => /skills\/demo-skill: SKILL\.md is missing/.test(message)))
+})
+
+test('validateRepo prefixes skill errors with the file path', (t) => {
+  const files = validRepoFiles({
+    'skills/demo-skill/SKILL.md': '---\nname: wrong-name\ndescription: Does a thing.\n---\n\n# Demo\n'
+  })
+  const { errors } = validateRepo(makeRepo(t, files))
+  assert.ok(errors.some((message) => message.startsWith('skills/demo-skill/SKILL.md: ')))
+})
+
+test('validateRepo reports a skill missing from plugin.json', (t) => {
+  const files = validRepoFiles({ '.claude-plugin/plugin.json': JSON.stringify({ skills: [] }) })
+  const { errors } = validateRepo(makeRepo(t, files))
+  assert.ok(errors.some((message) => /missing "\.\/skills\/demo-skill"/.test(message)))
+})
+
+test('validateRepo reports a stale path in plugin.json', (t) => {
+  const files = validRepoFiles({
+    '.claude-plugin/plugin.json': JSON.stringify({ skills: ['./skills/demo-skill', './skills/gone'] })
+  })
+  const { errors } = validateRepo(makeRepo(t, files))
+  assert.ok(errors.some((message) => /"\.\/skills\/gone" does not exist/.test(message)))
+})
+
+test('validateRepo reports invalid JSON in plugin.json', (t) => {
+  const files = validRepoFiles({ '.claude-plugin/plugin.json': '{ not json' })
+  const { errors } = validateRepo(makeRepo(t, files))
+  assert.ok(errors.some((message) => /invalid JSON/.test(message)))
+})
+
+test('validateRepo reports a skill missing from the README table', (t) => {
+  const files = validRepoFiles({ 'README.md': '- `demo-skill` — use when testing\n' })
+  const { errors } = validateRepo(makeRepo(t, files))
+  assert.ok(errors.some((message) => /no catalog table row for "demo-skill"/.test(message)))
+})
+
+test('validateRepo reports a skill missing from the README block', (t) => {
+  const files = validRepoFiles({ 'README.md': '| [`demo-skill`](skills/demo-skill/SKILL.md) | Demo |\n' })
+  const { errors } = validateRepo(makeRepo(t, files))
+  assert.ok(errors.some((message) => /no Skills-block bullet for "demo-skill"/.test(message)))
+})
+
+test('validateRepo does not accept a hyphen in place of the em dash', (t) => {
+  const files = validRepoFiles({
+    'README.md': '| [`demo-skill`](skills/demo-skill/SKILL.md) | Demo |\n- `demo-skill` - use when testing\n'
+  })
+  const { errors } = validateRepo(makeRepo(t, files))
+  assert.ok(errors.some((message) => /no Skills-block bullet for "demo-skill"/.test(message)))
 })
