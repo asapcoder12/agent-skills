@@ -1,6 +1,6 @@
 ---
 name: error-handling-patterns
-description: Master error handling patterns across languages including exceptions, Result types, error propagation, and graceful degradation to build resilient applications. Use when implementing error handling, designing APIs, or improving application reliability.
+description: Provides patterns for designing an error-handling strategy - exception hierarchies versus Result types, error propagation and wrapping, and retry, timeout, circuit-breaker and graceful-degradation policies. Use when designing a new error model, an API error contract, or a resilience policy around an unreliable dependency, or when reviewing how failures are surfaced across a codebase. Do NOT use for a routine try/except around a single call, ordinary bugfixes, or reading an existing stack trace. Keywords - Result type, exception hierarchy, retry, backoff, circuit breaker, timeout, error contract, graceful degradation.
 ---
 
 # Error Handling Patterns

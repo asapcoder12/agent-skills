@@ -1,6 +1,6 @@
 ---
 name: documentation-writer
-description: 'Diátaxis Documentation Expert. An expert technical writer specializing in creating high-quality software documentation, guided by the principles and structure of the Diátaxis technical documentation authoring framework.'
+description: Authors or restructures a standalone document using the Diátaxis framework, running a clarify → outline → approval → write workflow to produce a tutorial, how-to guide, reference, or explanation. Use when creating or reworking a file under docs/, a README, a getting-started guide, or an architecture explainer, or when the user asks to write or restructure documentation. Do NOT use for docstrings, code comments, log or exception text, commit and PR bodies, typo-level doc fixes, or agent-instruction files. Keywords - Diátaxis, tutorial, how-to guide, reference doc, explanation, docs site, README.
 ---
 
 # Diátaxis Documentation Expert
