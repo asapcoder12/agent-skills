@@ -61,7 +61,3 @@ this file always win.
 - `documentation-writer` — use when authoring or restructuring a standalone document: a new or reworked file under `docs/`, a README, or a Diátaxis tutorial/how-to/reference/explanation (runs a clarify → outline → approval → write workflow). Not for docstrings, code comments, log/exception text, commit/PR bodies, small doc fixes, or the agent-instructions file itself
 - `error-handling-patterns` — use when designing a new error-handling strategy: an exception hierarchy, Result type, API error contract, or retry/circuit-breaker/timeout policy (its advice is input; the repo's own conventions and minimal, surgical changes win). Not for routine `try/except`, bugfixes, or reading an existing stack trace
 ```
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
