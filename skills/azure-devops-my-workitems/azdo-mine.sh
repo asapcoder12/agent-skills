@@ -9,6 +9,11 @@
 #   * The acting Azure DevOps identity is verified via connectionData, not
 #     `az account show` (the ARM identity can diverge from the Boards identity).
 #   * A personal access token env var, or an unset expected account, fails closed.
+#   * Only explicitly requested fields are written: no hours, state, or other
+#     value is invented on the caller's behalf.
+#   * A closed work item is read-only until the user has been asked what to do
+#     with it (--allow-closed records that they answered).
+#   * Missing tooling is reported, never installed behind the user's back.
 #   * Deletion is never supported.
 #
 # See SKILL.md for setup and usage.
@@ -78,7 +83,53 @@ assert_mine() {
   [[ "$hit" == "$id" ]] || die "work item ${id} is not assigned to you; refusing to touch it"
 }
 
-preflight() { resolve_org_project; verify_identity; }
+# --- state guard -------------------------------------------------------------
+# A closed item is off limits until a human has decided what to do with it. The
+# decision uses the state *category* from the process template, not a hardcoded
+# list of state names: names are per-process configuration this repo cannot know.
+ITEM_TYPE=""; ITEM_STATE=""; ITEM_AREA=""; ITEM_ITER=""
+
+read_item() {
+  local id="$1" row
+  row="$(az boards work-item show --id "$id" --org "$ORG" \
+      --query "[fields.\"System.WorkItemType\",fields.\"System.State\",fields.\"System.AreaPath\",fields.\"System.IterationPath\"]" -o tsv)"
+  IFS=$'\t' read -r ITEM_TYPE ITEM_STATE ITEM_AREA ITEM_ITER <<<"$row"
+  [[ -n "$ITEM_TYPE" && -n "$ITEM_STATE" ]] || die "could not read the type and state of work item ${id}"
+}
+
+assert_not_closed() {
+  local id="$1" approved="$2" category
+  read_item "$id"
+  category="$(az rest --resource "$AZDO_RESOURCE" \
+      --url "${ORG}/${PROJECT}/_apis/wit/workitemtypes/${ITEM_TYPE// /%20}/states?api-version=7.1" \
+      --query "value[?name=='${ITEM_STATE}'].category | [0]" -o tsv 2>/dev/null || true)"
+  [[ -n "$category" ]] || die "cannot tell whether '${ITEM_STATE}' is a closed state for ${ITEM_TYPE} ${id}; stopping instead of guessing - ask the user how to proceed"
+  case "$category" in
+    Completed|Removed)
+      [[ "$approved" == "approved" ]] || die "work item ${id} is '${ITEM_STATE}' (state category ${category}); stop and ask the user what to do with a closed item, then pass --allow-closed once they have answered"
+      note "work item ${id} is '${ITEM_STATE}'; proceeding because --allow-closed was passed"
+      ;;
+  esac
+}
+
+# --- dependency guard --------------------------------------------------------
+# Report what is missing and why, then stop. Installing anything is the user's
+# call, made through 'install-deps' after they have agreed to it.
+require_deps() {
+  command -v az >/dev/null 2>&1 \
+    || die "the Azure CLI (\"az\") is not installed; it is what talks to Azure Boards. Tell the user it is needed and let them install it (https://aka.ms/installazurecli) - this script never installs it"
+  # An az configured to add extensions on its own would install software nobody
+  # approved, which is the decision this guard hands back to the user.
+  local dynamic="${AZURE_EXTENSION_USE_DYNAMIC_INSTALL:-}"
+  [[ -n "$dynamic" ]] || dynamic="$(az config get extension.use_dynamic_install --query value -o tsv 2>/dev/null || true)"
+  if [[ "$(lc "$dynamic")" == "yes_without_prompt" ]]; then
+    die "az is set to install extensions without prompting (extension.use_dynamic_install=yes_without_prompt); ask the user to set it to 'yes_prompt' so nothing is installed unasked"
+  fi
+  az extension show --name azure-devops -o none 2>/dev/null \
+    || die "the \"azure-devops\" az extension is missing; it provides the 'az boards' commands this script runs. Tell the user what it is and why it is needed, and run 'azdo-mine.sh install-deps' only after they agree"
+}
+
+preflight() { require_deps; resolve_org_project; verify_identity; }
 
 # --- subcommands -------------------------------------------------------------
 cmd_whoami() {
@@ -113,51 +164,115 @@ cmd_children() {
 }
 
 cmd_create_task() {
-  local parent="${1:?usage: create-task <parent-id> <title> [--hours N] [--state STATE]}"; shift
-  local title="${1:?usage: create-task <parent-id> <title> [--hours N] [--state STATE]}"; shift
-  local hours=1 state="Active"
+  local usage="usage: create-task <parent-id> <title> [--completed-work N] [--state STATE] [--allow-closed]"
+  local parent="${1:?$usage}"; shift
+  local title="${1:?$usage}"; shift
+  # Empty means "the caller did not ask for it", so the field is left alone.
+  # There are deliberately no defaults here: a value nobody requested is a value
+  # nobody can verify.
+  local completed_work="" state="" approved=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --hours) hours="${2:?--hours needs a value}"; shift 2 ;;
+      --completed-work) completed_work="${2:?--completed-work needs a value}"; shift 2 ;;
       --state) state="${2:?--state needs a value}"; shift 2 ;;
-      *) die "create-task: unknown option '$1'" ;;
+      --allow-closed) approved="approved"; shift ;;
+      *) die "create-task: unknown option '$1' ($usage)" ;;
     esac
   done
-  preflight; assert_mine "$parent"
-  # Land the task with its parent by inheriting area and iteration.
-  local area iter
-  area="$(az boards work-item show --id "$parent" --org "$ORG" --query 'fields."System.AreaPath"' -o tsv)"
-  iter="$(az boards work-item show --id "$parent" --org "$ORG" --query 'fields."System.IterationPath"' -o tsv)"
-  # Create the task (starts in 'New'), assigned to the acting identity.
+  if [[ -n "$completed_work" && ! "$completed_work" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    die "create-task: --completed-work must be a number of hours, got '$completed_work'"
+  fi
+  # Adding a child changes the parent's relations, so a closed parent is guarded
+  # exactly like any other closed item.
+  preflight; assert_mine "$parent"; assert_not_closed "$parent" "$approved"
+  # Only pass --fields when hours were actually requested.
+  local fields=()
+  [[ -n "$completed_work" ]] && fields=(--fields "${COMPLETED_WORK_FIELD}=${completed_work}")
+  # Create the task (starts in 'New'), assigned to the acting identity, in the
+  # parent's area and iteration.
   local new_id
   new_id="$(az boards work-item create --org "$ORG" --project "$PROJECT" \
     --type "Task" --title "$title" --assigned-to "$ACTING_EMAIL" \
-    --area "$area" --iteration "$iter" \
-    --fields "${COMPLETED_WORK_FIELD}=${hours}" --query "id" -o tsv)"
+    --area "$ITEM_AREA" --iteration "$ITEM_ITER" \
+    ${fields[@]+"${fields[@]}"} --query "id" -o tsv)"
   az boards work-item relation add --id "$new_id" --org "$ORG" \
     --relation-type "parent" --target-id "$parent" -o none
-  # 'New' -> target state cannot be set at creation time, so update afterwards.
-  if [[ "$state" != "New" ]]; then
+  # A new item always starts in 'New'; move it only if a state was requested.
+  if [[ -n "$state" ]]; then
     az boards work-item update --id "$new_id" --org "$ORG" --state "$state" -o none
   fi
-  echo "Created Task ${new_id} under ${parent}: ${title} (state=${state}, ${COMPLETED_WORK_FIELD}=${hours}, assigned=${ACTING_EMAIL})"
+  # Report the exact field set, so an unrequested value cannot pass unnoticed.
+  echo "Created Task ${new_id} under ${parent}"
+  echo "  title              = ${title}"
+  echo "  assigned           = ${ACTING_EMAIL}"
+  echo "  area / iteration   = inherited from ${parent}"
+  echo "  state              = ${state:-New (not requested)}"
+  echo "  ${COMPLETED_WORK_FIELD} = ${completed_work:-(not set)}"
+}
+
+cmd_update() {
+  local usage="usage: update <id> [--title TEXT] [--state STATE] [--completed-work N] [--allow-closed]"
+  local id="${1:?$usage}"; shift
+  # Same rule as create-task: an empty variable means the caller never named that
+  # field, and a field nobody named is never sent.
+  local title="" state="" completed_work="" approved=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title) title="${2:?--title needs a value}"; shift 2 ;;
+      --state) state="${2:?--state needs a value}"; shift 2 ;;
+      --completed-work) completed_work="${2:?--completed-work needs a value}"; shift 2 ;;
+      --allow-closed) approved="approved"; shift ;;
+      *) die "update: unknown option '$1' ($usage)" ;;
+    esac
+  done
+  [[ -n "$title$state$completed_work" ]] \
+    || die "update: nothing to update; name at least one field the user asked to change ($usage)"
+  if [[ -n "$completed_work" && ! "$completed_work" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    die "update: --completed-work must be a number of hours, got '$completed_work'"
+  fi
+  preflight; assert_mine "$id"; assert_not_closed "$id" "$approved"
+  local args=(--id "$id" --org "$ORG")
+  [[ -n "$title" ]] && args+=(--title "$title")
+  [[ -n "$state" ]] && args+=(--state "$state")
+  [[ -n "$completed_work" ]] && args+=(--fields "${COMPLETED_WORK_FIELD}=${completed_work}")
+  az boards work-item update "${args[@]}" -o none
+  # Report the change, including the state it moved away from.
+  echo "Updated work item ${id} (${ITEM_TYPE})"
+  [[ -n "$title" ]] && echo "  title              = ${title}"
+  [[ -n "$state" ]] && echo "  state              = ${ITEM_STATE} -> ${state}"
+  [[ -n "$completed_work" ]] && echo "  ${COMPLETED_WORK_FIELD} = ${completed_work}"
+  echo "  fields not touched by this call are unchanged"
 }
 
 cmd_set_state() {
-  local id="${1:?usage: set-state <id> <state>}"
-  local state="${2:?usage: set-state <id> <state>}"
-  preflight; assert_mine "$id"
-  az boards work-item update --id "$id" --org "$ORG" --state "$state" \
-    --query "fields.\"System.State\"" -o tsv
+  local usage="usage: set-state <id> <state> [--allow-closed]"
+  local id="${1:?$usage}"; shift
+  local state="${1:?$usage}"; shift
+  cmd_update "$id" --state "$state" "$@"
 }
 
 cmd_comment() {
-  local id="${1:?usage: comment <id> <text>}"; shift
-  local text="$*"
-  [[ -n "$text" ]] || die "comment text is empty"
-  preflight; assert_mine "$id"
+  local usage="usage: comment <id> <text> [--allow-closed]"
+  local id="${1:?$usage}"; shift
+  local text="${1:?$usage}"; shift
+  local approved=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --allow-closed) approved="approved"; shift ;;
+      *) die "comment: unexpected argument '$1'; pass the comment as ONE quoted argument so it is posted exactly as written ($usage)" ;;
+    esac
+  done
+  preflight; assert_mine "$id"; assert_not_closed "$id" "$approved"
   az boards work-item update --id "$id" --org "$ORG" --discussion "$text" -o none
-  echo "Comment added to ${id}"
+  echo "Comment added to ${id} - everyone watching the item is notified"
+}
+
+cmd_install_deps() {
+  command -v az >/dev/null 2>&1 \
+    || die "the Azure CLI (\"az\") is not installed; installing it is the user's own step (https://aka.ms/installazurecli)"
+  note "installing the 'azure-devops' az extension - nothing else"
+  az extension add --name azure-devops -o none
+  echo "Installed: azure-devops az extension"
 }
 
 usage() {
@@ -175,13 +290,25 @@ Commands:
   list [--all-states]                    List work items assigned to you
   show <id>                              Show one of your work items
   children <parent-id>                   List children of one of your items
-  create-task <parent-id> <title> [--hours N] [--state STATE]
-                                         Create a Task under your item, assigned to you
-                                         (default: --hours 1 --state Active)
+  create-task <parent-id> <title> [--completed-work N] [--state STATE]
+                                         Create a Task under your item, assigned to you.
+                                         Sets nothing else: omit a flag and that field
+                                         is left untouched (state stays 'New', no hours).
+  update <id> [--title TEXT] [--state STATE] [--completed-work N]
+                                         Change fields on one of your items. Only the
+                                         flags you pass are sent; everything else on the
+                                         item is left exactly as it was.
   set-state <id> <state>                 Change the state of one of your items
-  comment <id> <text>                    Add a discussion comment to one of your items
+  comment <id> <text>                    Add a discussion comment (text must be ONE
+                                         quoted argument; watchers get notified)
+  install-deps                           Install the azure-devops az extension. Run this
+                                         only after the user has agreed to it.
 
-Deletion is intentionally not supported.
+Every mutating command adds [--allow-closed], which is refused-by-default: a closed
+work item is read-only until you have asked the user what to do with it.
+
+Pass only values the requester actually gave you. Deletion is intentionally not
+supported.
 EOF
 }
 
@@ -193,8 +320,10 @@ main() {
     show)           cmd_show "$@" ;;
     children)       cmd_children "$@" ;;
     create-task)    cmd_create_task "$@" ;;
+    update)         cmd_update "$@" ;;
     set-state)      cmd_set_state "$@" ;;
     comment)        cmd_comment "$@" ;;
+    install-deps)   cmd_install_deps "$@" ;;
     delete|remove)  die "deletion is not supported by this helper" ;;
     ""|-h|--help|help) usage ;;
     *)              die "unknown command '$cmd' (run: azdo-mine.sh help)" ;;
