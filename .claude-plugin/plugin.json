@@ -1,0 +1,23 @@
+{
+  "name": "asapcoder-skills",
+  "version": "0.1.0",
+  "description": "Agent skills for engineering work — Azure Boards work items, Diátaxis documentation, and error-handling design.",
+  "author": {
+    "name": "ASAP Coder",
+    "url": "https://github.com/asapcoder12"
+  },
+  "repository": "https://github.com/asapcoder12/agent-skills",
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "agent-skills",
+    "azure-devops",
+    "documentation",
+    "error-handling"
+  ],
+  "skills": [
+    "./skills/azure-devops-my-workitems",
+    "./skills/documentation-writer",
+    "./skills/error-handling-patterns"
+  ]
+}

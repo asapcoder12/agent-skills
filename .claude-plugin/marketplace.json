@@ -1,0 +1,22 @@
+{
+  "name": "asapcoder12",
+  "owner": {
+    "name": "ASAP Coder",
+    "url": "https://github.com/asapcoder12"
+  },
+  "description": "ASAP Coder's agent skills, as an installable plugin.",
+  "plugins": [
+    {
+      "name": "asapcoder-skills",
+      "source": "./",
+      "description": "Agent skills for engineering work — Azure Boards work items, Diátaxis documentation, and error-handling design.",
+      "category": "engineering",
+      "keywords": [
+        "skills",
+        "azure-devops",
+        "documentation",
+        "error-handling"
+      ]
+    }
+  ]
+}
