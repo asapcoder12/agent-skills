@@ -100,7 +100,7 @@ export function validateSkillFrontmatter(directoryName, text) {
 }
 
 function hasCatalogRow(readmeLines, name) {
-  return readmeLines.some((line) => line.trimStart().startsWith('|') && line.includes(`skills/${name}/SKILL.md`))
+  return readmeLines.some((line) => line.trimStart().startsWith('|') && line.includes(`docs/${name}.md`))
 }
 
 function hasRoutingBullet(readmeLines, name) {
@@ -158,6 +158,15 @@ export function validateRepo(repoRoot) {
       for (const path of declared) {
         if (!expected.has(path)) errors.push(`.claude-plugin/plugin.json: "${path}" does not exist under skills/`)
       }
+    }
+  }
+
+  for (const name of directoryNames) {
+    const docPath = join(repoRoot, 'docs', `${name}.md`)
+    if (!existsSync(docPath)) {
+      errors.push(`docs/${name}.md: usage page is missing`)
+    } else if (readFileSync(docPath, 'utf8').trim() === '') {
+      errors.push(`docs/${name}.md: usage page is empty`)
     }
   }
 

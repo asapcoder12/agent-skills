@@ -38,9 +38,9 @@ claude plugin install asapcoder-skills@asapcoder12
 
 | Skill | What it does |
 |---|---|
-| [`azure-devops-my-workitems`](skills/azure-devops-my-workitems/SKILL.md) | Reads and updates your own Azure Boards work items through a guard script that refuses anything that is not verifiably yours. |
-| [`documentation-writer`](skills/documentation-writer/SKILL.md) | Writes or restructures a standalone document using the Diátaxis framework, via a clarify → outline → approval → write workflow. |
-| [`error-handling-patterns`](skills/error-handling-patterns/SKILL.md) | Designs an error-handling strategy: exception hierarchies vs Result types, error contracts, retry, timeout, circuit breaker. |
+| [`azure-devops-my-workitems`](docs/azure-devops-my-workitems.md) | Reads and updates your own Azure Boards work items through a guard script that refuses anything that is not verifiably yours. |
+| [`documentation-writer`](docs/documentation-writer.md) | Writes or restructures a standalone document using the Diátaxis framework, via a clarify → outline → approval → write workflow. |
+| [`error-handling-patterns`](docs/error-handling-patterns.md) | Designs an error-handling strategy: exception hierarchies vs Result types, error contracts, retry, timeout, circuit breaker. |
 
 ## Recommended setup
 
