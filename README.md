@@ -25,11 +25,14 @@ npx skills add asapcoder12/agent-skills --copy                     # copy files 
 npx skills add asapcoder12/agent-skills --all                      # everything, no prompts
 ```
 
-Claude Code can install the whole catalog as a plugin instead:
+Claude Code can install the whole catalog as a plugin instead. Add the marketplace once, then install from it:
 
 ```bash
-claude plugins install asapcoder-skills
+claude plugin marketplace add asapcoder12/agent-skills
+claude plugin install asapcoder-skills@asapcoder12
 ```
+
+`asapcoder12` is the marketplace, `asapcoder-skills` the plugin inside it. Updating later is `claude plugin update asapcoder-skills@asapcoder12`.
 
 ## Skills
 
