@@ -42,3 +42,55 @@ export function parseFrontmatter(text) {
 
   return { fields, bodyLineCount: body.length }
 }
+
+export function validateSkillFrontmatter(directoryName, text) {
+  const errors = []
+  const warnings = []
+
+  let parsed
+  try {
+    parsed = parseFrontmatter(text)
+  } catch (error) {
+    return { errors: [error.message], warnings }
+  }
+
+  const { fields, bodyLineCount } = parsed
+  const name = fields.name
+  const description = fields.description
+
+  if (!name) {
+    errors.push('frontmatter is missing `name`')
+  } else {
+    if (name.length > MAX_NAME) {
+      errors.push(`name is ${name.length} characters, the limit is ${MAX_NAME}`)
+    }
+    if (!NAME_PATTERN.test(name)) {
+      errors.push(`name "${name}" must be lowercase letters, digits and single hyphens`)
+    }
+    for (const word of RESERVED_WORDS) {
+      if (name.includes(word)) {
+        errors.push(`name "${name}" contains the reserved word "${word}"`)
+      }
+    }
+    if (name !== directoryName) {
+      errors.push(`name "${name}" does not match directory name "${directoryName}"`)
+    }
+  }
+
+  if (!description) {
+    errors.push('frontmatter is missing `description`')
+  } else {
+    if (description.length > MAX_DESCRIPTION) {
+      errors.push(`description is ${description.length} characters, the limit is ${MAX_DESCRIPTION}`)
+    }
+    if (/<[^>]+>/.test(description)) {
+      errors.push('description must not contain XML or HTML tags')
+    }
+  }
+
+  if (bodyLineCount > MAX_BODY_LINES) {
+    warnings.push(`body is ${bodyLineCount} lines, the recommended maximum is ${MAX_BODY_LINES}`)
+  }
+
+  return { errors, warnings }
+}
