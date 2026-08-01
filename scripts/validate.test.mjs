@@ -111,10 +111,11 @@ function validRepoFiles(overrides = {}) {
   const files = {
     'skills/demo-skill/SKILL.md': '---\nname: demo-skill\ndescription: Does a thing. Use when testing.\n---\n\n# Demo\n',
     '.claude-plugin/plugin.json': JSON.stringify({ skills: ['./skills/demo-skill'] }, null, 2),
+    'docs/demo-skill.md': '## What it does\n\nDemo.\n',
     'README.md': [
       '| Skill | What it does |',
       '|---|---|',
-      '| [`demo-skill`](skills/demo-skill/SKILL.md) | Demo |',
+      '| [`demo-skill`](docs/demo-skill.md) | Demo |',
       '',
       '- `demo-skill` — use when testing',
       ''
@@ -186,15 +187,33 @@ test('validateRepo reports a skill missing from the README table', (t) => {
 })
 
 test('validateRepo reports a skill missing from the README block', (t) => {
-  const files = validRepoFiles({ 'README.md': '| [`demo-skill`](skills/demo-skill/SKILL.md) | Demo |\n' })
+  const files = validRepoFiles({ 'README.md': '| [`demo-skill`](docs/demo-skill.md) | Demo |\n' })
   const { errors } = validateRepo(makeRepo(t, files))
   assert.ok(errors.some((message) => /no Skills-block bullet for "demo-skill"/.test(message)))
 })
 
 test('validateRepo does not accept a hyphen in place of the em dash', (t) => {
   const files = validRepoFiles({
-    'README.md': '| [`demo-skill`](skills/demo-skill/SKILL.md) | Demo |\n- `demo-skill` - use when testing\n'
+    'README.md': '| [`demo-skill`](docs/demo-skill.md) | Demo |\n- `demo-skill` - use when testing\n'
   })
   const { errors } = validateRepo(makeRepo(t, files))
   assert.ok(errors.some((message) => /no Skills-block bullet for "demo-skill"/.test(message)))
+})
+
+test('validateRepo reports a missing usage page', (t) => {
+  const { errors } = validateRepo(makeRepo(t, validRepoFiles({ 'docs/demo-skill.md': null })))
+  assert.ok(errors.some((message) => /docs\/demo-skill\.md: usage page is missing/.test(message)))
+})
+
+test('validateRepo reports an empty usage page', (t) => {
+  const { errors } = validateRepo(makeRepo(t, validRepoFiles({ 'docs/demo-skill.md': '   \n' })))
+  assert.ok(errors.some((message) => /docs\/demo-skill\.md: usage page is empty/.test(message)))
+})
+
+test('validateRepo rejects a catalog row still pointing at SKILL.md', (t) => {
+  const files = validRepoFiles({
+    'README.md': '| [`demo-skill`](skills/demo-skill/SKILL.md) | Demo |\n- `demo-skill` — use when testing\n'
+  })
+  const { errors } = validateRepo(makeRepo(t, files))
+  assert.ok(errors.some((message) => /no catalog table row for "demo-skill"/.test(message)))
 })
