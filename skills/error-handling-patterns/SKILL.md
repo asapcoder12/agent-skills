@@ -1,22 +1,30 @@
 ---
 name: error-handling-patterns
-description: Provides patterns for designing an error-handling strategy - exception hierarchies versus Result types, error propagation and wrapping, and retry, timeout, circuit-breaker and graceful-degradation policies. Use when designing a new error model, an API error contract, or a resilience policy around an unreliable dependency, or when reviewing how failures are surfaced across a codebase. Do NOT use for a routine try/except around a single call, ordinary bugfixes, or reading an existing stack trace. Keywords - Result type, exception hierarchy, retry, backoff, circuit breaker, timeout, error contract, graceful degradation.
+description: Patterns for deciding how a system fails - exception hierarchies versus Result types, error propagation and wrapping, API error contracts, and retry, backoff, timeout, circuit-breaker and graceful-degradation policies. Use when the task is to choose or review an error strategy rather than fix one failing call - designing an error model, defining what an API returns on failure, adding resilience around a flaky or third-party dependency, or auditing how failures surface across a codebase. Triggers - "design the error model", "should this raise or return a Result", "add retry with backoff around this call", "this dependency is flaky, what policy fits", "our error handling is inconsistent", "what should this endpoint return on failure". Do NOT use for a single try/except, an ordinary bugfix, reading an existing stack trace, or debugging one failing test. Keywords - error handling, exception hierarchy, custom exceptions, Result type, error contract, circuit breaker, fault tolerance.
 ---
 
 # Error Handling Patterns
 
 Build resilient applications with robust error handling strategies that gracefully handle failures and provide excellent debugging experiences.
 
-## When to Use This Skill
+## Scope check
 
-- Implementing error handling in new features
-- Designing error-resilient APIs
-- Debugging production issues
-- Improving application reliability
-- Creating better error messages for users and developers
-- Implementing retry and circuit breaker patterns
-- Handling async/concurrent errors
-- Building fault-tolerant distributed systems
+This skill is for choosing a **shape**, not for fixing one call. Confirm the task is
+one of these before going further:
+
+- Designing an error model or exception hierarchy for a new module or service
+- Deciding the error contract an API returns - status codes, error bodies, error codes
+- Picking a policy around a dependency you do not control - retry, backoff, timeout,
+  circuit breaker, graceful degradation
+- Choosing between exceptions and Result types for a boundary
+- Auditing how failures surface across an existing module and making them consistent
+- Deciding how errors cross an async or concurrency boundary
+
+If instead the task is a single `try/except`, an ordinary bugfix, a stack trace to read,
+or one failing test to debug, **say so and drop this skill** - just make the fix.
+
+The patterns here are input, not law. Where the repo already has an error convention,
+the convention wins, and the smallest change that fits it beats a redesign.
 
 ## Core Concepts
 
