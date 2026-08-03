@@ -42,4 +42,4 @@ Then type `/azure-devops-my-workitems`, or just ask:
 - "set item 30775 to Resolved"
 - "comment on 30775 that the migration is done"
 
-Expect a question back when your request leaves a field unnamed — that is the design, not a stall. `azdo-mine.sh whoami` confirms which account it will act as, and `./test-azdo-mine.sh` checks the guards still hold offline, creating nothing.
+Expect a question back when your request leaves a field unnamed — that is the design, not a stall. `azdo-mine.sh whoami` confirms which account it will act as, and changes nothing itself.

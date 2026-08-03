@@ -191,8 +191,9 @@ Every mutating command also takes `--allow-closed`, refused by default. See
   extension.
 - **No deletion.**
 
-Run `./test-azdo-mine.sh` (offline, stubs `az`, creates nothing) to check these
-guards still hold - it asserts on the exact arguments each command assembles.
+To check a setup without changing anything, run `azdo-mine.sh whoami` - it prints
+the identity every operation will act as, and refuses if that is not you.
+`list`, `show`, and `children` are read-only too.
 
 ## Example (the common flow)
 

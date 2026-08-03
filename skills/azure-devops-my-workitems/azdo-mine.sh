@@ -91,10 +91,17 @@ ITEM_TYPE=""; ITEM_STATE=""; ITEM_AREA=""; ITEM_ITER=""
 
 read_item() {
   local id="$1" row
+  # The outer brackets are load-bearing: -o tsv prints one *row* per top-level
+  # list element and only tab-joins within a row. A flat [a,b,c,d] therefore
+  # comes back as four lines with no tab anywhere, and the single `read` below
+  # would swallow line one whole and leave the rest empty. [[a,b,c,d]] is one
+  # row of four columns, which is what `read` is parsing.
+  # tr -d '\r' is for non-MSYS shells: MSYS bash strips the trailing CRLF in
+  # $(...) but keeps the interior ones, and elsewhere even the trailing \r stays.
   row="$(az boards work-item show --id "$id" --org "$ORG" \
-      --query "[fields.\"System.WorkItemType\",fields.\"System.State\",fields.\"System.AreaPath\",fields.\"System.IterationPath\"]" -o tsv)"
+      --query "[[fields.\"System.WorkItemType\",fields.\"System.State\",fields.\"System.AreaPath\",fields.\"System.IterationPath\"]]" -o tsv | tr -d '\r')"
   IFS=$'\t' read -r ITEM_TYPE ITEM_STATE ITEM_AREA ITEM_ITER <<<"$row"
-  [[ -n "$ITEM_TYPE" && -n "$ITEM_STATE" ]] || die "could not read the type and state of work item ${id}"
+  [[ -n "$ITEM_TYPE" && -n "$ITEM_STATE" ]] || die "could not read the type and state of work item ${id} (checked with 'az boards work-item show --id ${id}')"
 }
 
 assert_not_closed() {
