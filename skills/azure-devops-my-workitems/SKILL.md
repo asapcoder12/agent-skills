@@ -33,6 +33,13 @@ to something they actually said.**
 - `--completed-work` writes `Microsoft.VSTS.Scheduling.CompletedWork` (hours
   already spent). "3 hours" in a request does not say which hours field it means;
   that is a question to ask, not a mapping to pick.
+- **Area and iteration are the one exception, and they are not yours to choose
+  either.** `create-task` copies both from the parent, because a child belongs on
+  the same board as the item it hangs under - that is structure, not a value
+  judgement about the work. There is no flag to set them, so you cannot pick a
+  sprint or a team. If the parent's paths come back empty the flags are omitted
+  entirely rather than sent as `""`, the task lands on the project default, and
+  the command says so out loud.
 
 **No exceptions:**
 
@@ -56,9 +63,10 @@ reading a number off a neighbour is still inventing it for this item.
 
 ### Report the field set afterwards
 
-`create-task` prints every field it set, including `state = New (not requested)`
-and `CompletedWork = (not set)`. Show that output verbatim - it is the
-requester's only chance to spot a value they never asked for.
+`create-task` prints every field it set, including `state = New (not requested)`,
+`CompletedWork = (not set)`, and the literal area and iteration paths it inherited.
+Show that output verbatim - it is the requester's only chance to spot a value they
+never asked for, or a task that landed on the wrong board.
 
 ### Rationalizations
 
@@ -181,6 +189,10 @@ Every mutating command also takes `--allow-closed`, refused by default. See
   resulting field set. `update` with no flags refuses instead of writing a no-op,
   the removed `--hours` flag is rejected as an unknown option rather than silently
   mapped to a field, and a non-numeric `--completed-work` refuses.
+- **Board placement is inherited, not chosen.** A new Task takes its area and
+  iteration from its parent and there is no flag to override either. A path that
+  reads back empty is left out of the request rather than sent as `""`, so no
+  field is ever blanked on the way to a default.
 - **Closed items refuse.** State category `Completed`/`Removed` blocks `update`,
   `set-state`, `comment`, and `create-task` on a closed parent, until
   `--allow-closed` records that the user was asked. An unresolvable category also

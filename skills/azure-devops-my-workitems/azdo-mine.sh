@@ -190,17 +190,35 @@ cmd_create_task() {
     die "create-task: --completed-work must be a number of hours, got '$completed_work'"
   fi
   # Adding a child changes the parent's relations, so a closed parent is guarded
-  # exactly like any other closed item.
+  # exactly like any other closed item. That same call reads the parent, which is
+  # where ITEM_AREA / ITEM_ITER below come from.
   preflight; assert_mine "$parent"; assert_not_closed "$parent" "$approved"
   # Only pass --fields when hours were actually requested.
   local fields=()
   [[ -n "$completed_work" ]] && fields=(--fields "${COMPLETED_WORK_FIELD}=${completed_work}")
-  # Create the task (starts in 'New'), assigned to the acting identity, in the
-  # parent's area and iteration.
+  # Area and iteration are inherited from the parent, never chosen here - a child
+  # belongs on the same board as the item it hangs under. A path that came back
+  # empty is omitted rather than sent as "": an empty --area asks the server to
+  # blank the field, which is a value nobody requested. Azure DevOps populates
+  # both on every real item, so an empty one means the parent read came back
+  # short - report that instead of quietly creating the task somewhere else.
+  local inherit=()
+  if [[ -n "$ITEM_AREA" ]]; then
+    inherit+=(--area "$ITEM_AREA")
+  else
+    note "parent ${parent} returned no area path; leaving the new task's area to the project default"
+  fi
+  if [[ -n "$ITEM_ITER" ]]; then
+    inherit+=(--iteration "$ITEM_ITER")
+  else
+    note "parent ${parent} returned no iteration path; leaving the new task's iteration to the project default"
+  fi
+  # Create the task (starts in 'New'), assigned to the acting identity, on the
+  # parent's board.
   local new_id
   new_id="$(az boards work-item create --org "$ORG" --project "$PROJECT" \
     --type "Task" --title "$title" --assigned-to "$ACTING_EMAIL" \
-    --area "$ITEM_AREA" --iteration "$ITEM_ITER" \
+    ${inherit[@]+"${inherit[@]}"} \
     ${fields[@]+"${fields[@]}"} --query "id" -o tsv)"
   az boards work-item relation add --id "$new_id" --org "$ORG" \
     --relation-type "parent" --target-id "$parent" -o none
@@ -212,7 +230,10 @@ cmd_create_task() {
   echo "Created Task ${new_id} under ${parent}"
   echo "  title              = ${title}"
   echo "  assigned           = ${ACTING_EMAIL}"
-  echo "  area / iteration   = inherited from ${parent}"
+  # Print the paths themselves, not the claim "inherited": a wrong or missing
+  # board placement is only visible if the actual value is on screen.
+  echo "  area               = ${ITEM_AREA:-(project default - parent had none)}"
+  echo "  iteration          = ${ITEM_ITER:-(project default - parent had none)}"
   echo "  state              = ${state:-New (not requested)}"
   echo "  ${COMPLETED_WORK_FIELD} = ${completed_work:-(not set)}"
 }
