@@ -9,7 +9,7 @@ npx skills update azure-devops-my-workitems
 
 ## What it does
 
-Works with the Azure Boards work items assigned to **you** — lists them, shows one, creates a Task under one, changes title, state or hours, adds a comment.
+Works with the Azure Boards work items assigned to **you** — lists them, shows one, creates a Task under one, changes title, description, state or hours, adds a comment, attaches a file.
 
 Every write goes through `azdo-mine.sh`, which fails closed. It verifies the acting identity against `AZDO_EXPECTED_ACCOUNT`, refuses to run if a PAT is set, and checks ownership server-side with `AssignedTo = @Me` before touching anything. It cannot edit someone else's item, and it cannot delete.
 
@@ -41,5 +41,9 @@ Then type `/azure-devops-my-workitems`, or just ask:
 - "put 2 hours on item 30775"
 - "set item 30775 to Resolved"
 - "comment on 30775 that the migration is done"
+- "set the description of 30780 to …"
+- "attach ./notes.md to 30780"
+
+Note that setting a description **replaces** the existing one rather than appending to it, so say so if you meant to add a paragraph — the skill will read the current text back to you first.
 
 Expect a question back when your request leaves a field unnamed — that is the design, not a stall. `azdo-mine.sh whoami` confirms which account it will act as, and changes nothing itself.

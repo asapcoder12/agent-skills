@@ -171,17 +171,20 @@ cmd_children() {
 }
 
 cmd_create_task() {
-  local usage="usage: create-task <parent-id> <title> [--completed-work N] [--state STATE] [--allow-closed]"
+  local usage="usage: create-task <parent-id> <title> [--description TEXT] [--completed-work N] [--state STATE] [--allow-closed]"
   local parent="${1:?$usage}"; shift
   local title="${1:?$usage}"; shift
   # Empty means "the caller did not ask for it", so the field is left alone.
   # There are deliberately no defaults here: a value nobody requested is a value
   # nobody can verify.
-  local completed_work="" state="" approved=""
+  local completed_work="" state="" description="" approved=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --completed-work) completed_work="${2:?--completed-work needs a value}"; shift 2 ;;
       --state) state="${2:?--state needs a value}"; shift 2 ;;
+      # System.Description is an HTML field; the text is sent verbatim, so pass
+      # it as ONE argument exactly as the requester wrote it.
+      --description) description="${2:?--description needs a value}"; shift 2 ;;
       --allow-closed) approved="approved"; shift ;;
       *) die "create-task: unknown option '$1' ($usage)" ;;
     esac
@@ -213,12 +216,15 @@ cmd_create_task() {
   else
     note "parent ${parent} returned no iteration path; leaving the new task's iteration to the project default"
   fi
+  # Only pass --description when the caller supplied one.
+  local desc_arg=()
+  [[ -n "$description" ]] && desc_arg=(--description "$description")
   # Create the task (starts in 'New'), assigned to the acting identity, on the
   # parent's board.
   local new_id
   new_id="$(az boards work-item create --org "$ORG" --project "$PROJECT" \
     --type "Task" --title "$title" --assigned-to "$ACTING_EMAIL" \
-    ${inherit[@]+"${inherit[@]}"} \
+    ${inherit[@]+"${inherit[@]}"} ${desc_arg[@]+"${desc_arg[@]}"} \
     ${fields[@]+"${fields[@]}"} --query "id" -o tsv)"
   az boards work-item relation add --id "$new_id" --org "$ORG" \
     --relation-type "parent" --target-id "$parent" -o none
@@ -229,6 +235,13 @@ cmd_create_task() {
   # Report the exact field set, so an unrequested value cannot pass unnoticed.
   echo "Created Task ${new_id} under ${parent}"
   echo "  title              = ${title}"
+  # Report the size, not the body: a long description would bury every line
+  # below it, which is where an unrequested value would show up.
+  if [[ -n "$description" ]]; then
+    echo "  description        = set (${#description} chars)"
+  else
+    echo "  description        = (not set)"
+  fi
   echo "  assigned           = ${ACTING_EMAIL}"
   # Print the paths themselves, not the claim "inherited": a wrong or missing
   # board placement is only visible if the actual value is on screen.
@@ -239,21 +252,24 @@ cmd_create_task() {
 }
 
 cmd_update() {
-  local usage="usage: update <id> [--title TEXT] [--state STATE] [--completed-work N] [--allow-closed]"
+  local usage="usage: update <id> [--title TEXT] [--description TEXT] [--state STATE] [--completed-work N] [--allow-closed]"
   local id="${1:?$usage}"; shift
   # Same rule as create-task: an empty variable means the caller never named that
   # field, and a field nobody named is never sent.
-  local title="" state="" completed_work="" approved=""
+  local title="" state="" completed_work="" description="" approved=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --title) title="${2:?--title needs a value}"; shift 2 ;;
+      # Replaces System.Description outright (an HTML field) - it is not appended
+      # to. Pass the text as ONE argument, verbatim.
+      --description) description="${2:?--description needs a value}"; shift 2 ;;
       --state) state="${2:?--state needs a value}"; shift 2 ;;
       --completed-work) completed_work="${2:?--completed-work needs a value}"; shift 2 ;;
       --allow-closed) approved="approved"; shift ;;
       *) die "update: unknown option '$1' ($usage)" ;;
     esac
   done
-  [[ -n "$title$state$completed_work" ]] \
+  [[ -n "$title$state$completed_work$description" ]] \
     || die "update: nothing to update; name at least one field the user asked to change ($usage)"
   if [[ -n "$completed_work" && ! "$completed_work" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
     die "update: --completed-work must be a number of hours, got '$completed_work'"
@@ -261,12 +277,16 @@ cmd_update() {
   preflight; assert_mine "$id"; assert_not_closed "$id" "$approved"
   local args=(--id "$id" --org "$ORG")
   [[ -n "$title" ]] && args+=(--title "$title")
+  [[ -n "$description" ]] && args+=(--description "$description")
   [[ -n "$state" ]] && args+=(--state "$state")
   [[ -n "$completed_work" ]] && args+=(--fields "${COMPLETED_WORK_FIELD}=${completed_work}")
   az boards work-item update "${args[@]}" -o none
   # Report the change, including the state it moved away from.
   echo "Updated work item ${id} (${ITEM_TYPE})"
   [[ -n "$title" ]] && echo "  title              = ${title}"
+  # "replaced", not "set": the old description is gone, which the caller has to
+  # see even when they only meant to add a line.
+  [[ -n "$description" ]] && echo "  description        = replaced (${#description} chars)"
   [[ -n "$state" ]] && echo "  state              = ${ITEM_STATE} -> ${state}"
   [[ -n "$completed_work" ]] && echo "  ${COMPLETED_WORK_FIELD} = ${completed_work}"
   echo "  fields not touched by this call are unchanged"
@@ -295,6 +315,54 @@ cmd_comment() {
   echo "Comment added to ${id} - everyone watching the item is notified"
 }
 
+cmd_attach() {
+  local usage="usage: attach <id> <file-path> [--allow-closed]"
+  local id="${1:?$usage}"; shift
+  local path="${1:?$usage}"; shift
+  local approved=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --allow-closed) approved="approved"; shift ;;
+      *) die "attach: unexpected argument '$1' ($usage)" ;;
+    esac
+  done
+  [[ -f "$path" ]] || die "attach: no such file '$path'"
+  preflight; assert_mine "$id"; assert_not_closed "$id" "$approved"
+  command -v curl >/dev/null 2>&1 \
+    || die "attach: curl is required to upload the file bytes and is not installed"
+  local name url token
+  name="$(basename "$path")"
+  # The upload goes through curl, not 'az rest': az encodes a request body as
+  # latin-1 and dies on any non-ASCII byte (an em dash in a Markdown file is
+  # enough). curl sends the file verbatim with --data-binary.
+  # The token is the same logged-in identity already verified by preflight - no
+  # PAT is introduced, and it is never printed.
+  token="$(az account get-access-token --resource "$AZDO_RESOURCE" \
+      --query accessToken -o tsv 2>/dev/null | tr -d '\r' || true)"
+  [[ -n "$token" ]] || die "attach: could not acquire an Azure DevOps access token"
+  # Two steps: upload the bytes to the attachment store, then link the returned
+  # url to the work item as an AttachedFile relation. '|| true' keeps a curl
+  # failure from tripping set -e before the explicit refusal below can report it.
+  url="$(curl -sS -X POST \
+      -H "Authorization: Bearer ${token}" \
+      -H "Content-Type: application/octet-stream" \
+      --data-binary "@${path}" \
+      "${ORG}/${PROJECT}/_apis/wit/attachments?fileName=${name// /%20}&api-version=7.1" \
+      | sed -n 's/.*"url":"\([^"]*\)".*/\1/p' | tr -d '\r' || true)"
+  [[ -n "$url" ]] || die "attach: could not upload '${name}' to the attachment store"
+  # An upload that is never linked is invisible on the item, so a failure here is
+  # fatal rather than a warning: silence would leave an orphaned blob behind.
+  az rest --resource "$AZDO_RESOURCE" --method patch \
+    --url "${ORG}/${PROJECT}/_apis/wit/workitems/${id}?api-version=7.1" \
+    --headers "Content-Type=application/json-patch+json" \
+    --body "[{\"op\":\"add\",\"path\":\"/relations/-\",\"value\":{\"rel\":\"AttachedFile\",\"url\":\"${url}\"}}]" \
+    -o none \
+    || die "attach: uploaded '${name}' but could not link it to ${id}; the upload is not visible on the item"
+  echo "Attached ${name} to ${id} ($(wc -c <"$path" | tr -d ' ') bytes)"
+  echo "  url                = ${url}"
+  echo "  no other field on ${id} was touched"
+}
+
 cmd_install_deps() {
   command -v az >/dev/null 2>&1 \
     || die "the Azure CLI (\"az\") is not installed; installing it is the user's own step (https://aka.ms/installazurecli)"
@@ -318,17 +386,21 @@ Commands:
   list [--all-states]                    List work items assigned to you
   show <id>                              Show one of your work items
   children <parent-id>                   List children of one of your items
-  create-task <parent-id> <title> [--completed-work N] [--state STATE]
+  create-task <parent-id> <title> [--description TEXT] [--completed-work N] [--state STATE]
                                          Create a Task under your item, assigned to you.
                                          Sets nothing else: omit a flag and that field
-                                         is left untouched (state stays 'New', no hours).
-  update <id> [--title TEXT] [--state STATE] [--completed-work N]
+                                         is left untouched (state stays 'New', no hours,
+                                         no description).
+  update <id> [--title TEXT] [--description TEXT] [--state STATE] [--completed-work N]
                                          Change fields on one of your items. Only the
                                          flags you pass are sent; everything else on the
-                                         item is left exactly as it was.
+                                         item is left exactly as it was. --description
+                                         REPLACES the description, it does not append.
   set-state <id> <state>                 Change the state of one of your items
   comment <id> <text>                    Add a discussion comment (text must be ONE
                                          quoted argument; watchers get notified)
+  attach <id> <file-path>                Upload a file and link it to your item as an
+                                         attachment; no other field is touched
   install-deps                           Install the azure-devops az extension. Run this
                                          only after the user has agreed to it.
 
@@ -351,6 +423,7 @@ main() {
     update)         cmd_update "$@" ;;
     set-state)      cmd_set_state "$@" ;;
     comment)        cmd_comment "$@" ;;
+    attach)         cmd_attach "$@" ;;
     install-deps)   cmd_install_deps "$@" ;;
     delete|remove)  die "deletion is not supported by this helper" ;;
     ""|-h|--help|help) usage ;;

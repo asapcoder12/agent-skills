@@ -1,6 +1,6 @@
 ---
 name: azure-devops-my-workitems
-description: Use ONLY when the user explicitly asks about their own Azure DevOps / Azure Boards work items, or invokes this skill by name. Triggers - "my work items", "list tasks under story N", "add a task to work item N", "rename/update item N", "put N hours on item N", "set item N to Active/Resolved", "comment on work item N". Do NOT auto-trigger from git, branch, PR, or build activity - a branch, commit, or PR carrying a work-item id (feature/30856/..., US 30472, AB#30769) is not a request to read or change that item, and finishing a coding task is not a request to update its board. Scope - only items assigned to the user, never anyone else's. Keywords - az boards, azure-devops CLI, work item, AssignedTo, @Me.
+description: Use ONLY when the user explicitly asks about their own Azure DevOps / Azure Boards work items, or invokes this skill by name. Triggers - "my work items", "list tasks under story N", "add a task to work item N", "rename/update item N", "put N hours on item N", "set item N to Active/Resolved", "comment on work item N", "set the description of item N", "attach this file to work item N". Do NOT auto-trigger from git, branch, PR, or build activity - a branch, commit, or PR carrying a work-item id (feature/30856/..., US 30472, AB#30769) is not a request to read or change that item, and finishing a coding task is not a request to update its board. Scope - only items assigned to the user, never anyone else's. Keywords - az boards, azure-devops CLI, work item, AssignedTo, @Me.
 ---
 
 # Azure DevOps: my work items only
@@ -20,16 +20,20 @@ Every field on a work item is read by people who assume a human put it there.
 **The requester's words are the whole spec. Every field you send must trace back
 to something they actually said.**
 
-- Send `--completed-work` / `--state` / `--title` **only** when the request named
-  that value. Omit the flag and the field stays untouched - a new Task simply
-  stays in `New` with no hours on it. That is a correct outcome, not an
-  incomplete one.
+- Send `--completed-work` / `--state` / `--title` / `--description` **only** when
+  the request named that value. Omit the flag and the field stays untouched - a
+  new Task simply stays in `New` with no hours and no description on it. That is
+  a correct outcome, not an incomplete one.
 - This applies identically to `update` on an existing item: it changes exactly
   the flags you pass and leaves every other field as it was. Editing one field is
   never an invitation to "finish" the others.
 - Pass the title **verbatim**. No rewording, no prefix, no work-item id, no
   capitalisation fix, no "clearer" phrasing.
 - Comment text goes in verbatim too - no added signature, summary, or context.
+- `--description` writes `System.Description` verbatim, as ONE argument. On
+  `update` it **replaces** the existing description outright - it does not append.
+  If the user asked to *add* to a description, read the current one first and
+  confirm the merged text with them; do not assume the field was empty.
 - `--completed-work` writes `Microsoft.VSTS.Scheduling.CompletedWork` (hours
   already spent). "3 hours" in a request does not say which hours field it means;
   that is a question to ask, not a mapping to pick.
@@ -64,9 +68,11 @@ reading a number off a neighbour is still inventing it for this item.
 ### Report the field set afterwards
 
 `create-task` prints every field it set, including `state = New (not requested)`,
-`CompletedWork = (not set)`, and the literal area and iteration paths it inherited.
-Show that output verbatim - it is the requester's only chance to spot a value they
-never asked for, or a task that landed on the wrong board.
+`CompletedWork = (not set)`, `description = (not set)`, and the literal area and
+iteration paths it inherited. Show that output verbatim - it is the requester's
+only chance to spot a value they never asked for, or a task that landed on the
+wrong board. A description is reported as a character count rather than echoed in
+full, so a long body cannot push the rest of the field set off screen.
 
 ### Rationalizations
 
@@ -87,8 +93,8 @@ never asked for, or a task that landed on the wrong board.
 **A work item whose state category is `Completed` or `Removed` is off limits.
 Stop, tell the user, ask what to do - do not act.**
 
-`update`, `set-state`, `comment`, and `create-task` (on a closed *parent*) all
-refuse on a closed item and say so. That refusal is the signal to go back to the
+`update`, `set-state`, `comment`, `attach`, and `create-task` (on a closed
+*parent*) all refuse on a closed item and say so. That refusal is the signal to go back to the
 user, not a hurdle to route around:
 
 > 30775 is `Closed` (category `Completed`). Editing a closed item changes work
@@ -133,6 +139,7 @@ script never does either.
 - Creating a Task under one of your items (auto-assigned to you).
 - Changing fields (title, state, hours) on an item assigned to you.
 - Changing the state of, or commenting on, an item assigned to you.
+- Attaching a file to an item assigned to you.
 - Any Azure Boards work where the hard requirement is "only my account, only my
   items".
 
@@ -163,10 +170,11 @@ Run from the repo (org/project are parsed from the git remote unless overridden)
 | `azdo-mine.sh list [--all-states]` | Work items assigned to you |
 | `azdo-mine.sh show <id>` | Show one of your items |
 | `azdo-mine.sh children <parent-id>` | Children of one of your items |
-| `azdo-mine.sh create-task <parent-id> <title> [--completed-work N] [--state STATE]` | New Task under your item, assigned to you. No defaults: an omitted flag leaves that field unset |
-| `azdo-mine.sh update <id> [--title TEXT] [--state STATE] [--completed-work N]` | Change fields on your item. Only the flags you pass are sent; every other field is left as it was |
+| `azdo-mine.sh create-task <parent-id> <title> [--description TEXT] [--completed-work N] [--state STATE]` | New Task under your item, assigned to you. No defaults: an omitted flag leaves that field unset |
+| `azdo-mine.sh update <id> [--title TEXT] [--description TEXT] [--state STATE] [--completed-work N]` | Change fields on your item. Only the flags you pass are sent; every other field is left as it was. `--description` **replaces**, never appends |
 | `azdo-mine.sh set-state <id> <state>` | Change the state of your item (a thin `update --state`; prints `old -> new`) |
 | `azdo-mine.sh comment <id> <text>` | Add a discussion comment to your item. Text must be ONE quoted argument |
+| `azdo-mine.sh attach <id> <file-path>` | Upload a file and link it to your item as an attachment. Changes no other field |
 | `azdo-mine.sh install-deps` | Install the `azure-devops` az extension - only after the user agreed |
 
 Every mutating command also takes `--allow-closed`, refused by default. See
@@ -194,9 +202,17 @@ Every mutating command also takes `--allow-closed`, refused by default. See
   reads back empty is left out of the request rather than sent as `""`, so no
   field is ever blanked on the way to a default.
 - **Closed items refuse.** State category `Completed`/`Removed` blocks `update`,
-  `set-state`, `comment`, and `create-task` on a closed parent, until
+  `set-state`, `comment`, `attach`, and `create-task` on a closed parent, until
   `--allow-closed` records that the user was asked. An unresolvable category also
   refuses.
+- **`attach` adds a file and nothing else.** It runs the same ownership and
+  closed-state guards, then uploads the bytes and links them as an `AttachedFile`
+  relation - no field on the item is written. The upload uses `curl` with the
+  token of the already-verified logged-in identity (no PAT); `az rest` is not used
+  for it because `az` encodes a request body as latin-1 and fails on any non-ASCII
+  byte, which an em dash in a Markdown file is enough to trigger. A missing `curl`
+  refuses with an explanation, and a file that uploads but cannot be linked is a
+  hard failure - an unlinked attachment is invisible on the item.
 - **Nothing is installed silently.** A missing Azure CLI, a missing
   `azure-devops` extension, or `use_dynamic_install=yes_without_prompt` all
   refuse with an explanation; only `install-deps` installs, and only the one
